@@ -1,0 +1,3 @@
+inputdata_warning for basic tags (defaults), not direct exceptions at begining, but after recollecting all the data
+
+

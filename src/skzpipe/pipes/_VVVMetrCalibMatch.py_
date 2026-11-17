@@ -1,0 +1,980 @@
+#!/usr/bin/python3
+
+
+import re, os, shutil, sys
+
+from ..exceptions import *
+from .. import match as match
+from .. import functions as funct
+from .. import parameters as par
+from ..photometry.daophot import daophals as DpAls
+from ..photometry.daophot import allframe as Alf
+from .. import stacking as stack
+
+
+def VVVMetrCalibMatch():
+  """
+""";
+  _name_='VVVMetrCalibMatch';
+  startime=funct.startime();
+  (pathscript, scriptname, scriptype)=funct.scriptdefine();
+  if(scriptname==None): scriptname=_name_;
+
+  startime+=funct.WaitStop([scriptname]);
+
+
+
+
+
+  Metrdatafile="VVV-metr";
+  calibfile="VVV-calib";
+  calpar={};
+  tyuiop=None;
+  rraww=None;
+  idxwntk=None;
+  filterL=["J","H","Ks","Y","Z"];
+  filterD={"J":0, "H":1, "Ks":2, "Y":3, "Z":4);
+
+  #skzmagcorr=0;
+  #zeropoint="17.39,16.93,16.40";
+
+#STD catalog
+  par.SkZp_Opt['S']['stdcat']="";
+  par.SkZp_Opt['L']['stdposcoomag']=[];
+  par.SkZp_Opt['L']['filterstdcat']=[];
+  par.SkZp_Opt['L']['stdcut']=[2.2,.34,.03];
+  par.SkZp_Opt['LT']['magcut']=[(11.5,13.5), (11.5,13.0), (10.5,12.5)];
+  par.SkZp_Opt['L']['magcutdef']=[9,14.5];
+  notsamecol=0;      #use the same magnitude in the color for the calibration/the same color for all the calibration
+  par.SkZp_Opt['L']['coeffpbs']=[2, 2, 4];  #global value of -a +a b
+  coeffpbsfL=[];
+  coeffpbsf="";
+
+#metrVVVsel
+  alfsuff="alf";
+  alfsuffcl=alfsuff+"M";
+  alfclean=1;   ## 0 no cleaning; 1 clean; -1 not run the program and get recovered stars
+  cleanway=1;   ## 0 only sigma clip; >0 also empiric
+  mggm={"Jb":.6, "Hb":.23, "Ksb|Ksd...v":-.64, "Jd":1.2, "Hd":1.25, "Ksd": .45};  #mean zeropoint of the calibration for metrVVVsel
+  sigmacliprej=3;
+  cleanratio=.2;
+  regflag=-1;
+  framerem=1;   ## 0 to keep the frame, 1 to remove the whole frame, -1 to remove only upper and lower part
+  chicutrej=8;
+  alfsuffrej=alfsuffcl+"rej";
+  alfsuffrec=alfsuffcl+"rec";
+
+#Building the Ctlg &C
+  par.SkZp_Opt['S']['VVVmatch']="union"; #"match";
+  wantedfilter="";
+  par.SkZp_Opt['F']['denmapbin']=88;
+  par.SkZp_Opt['I']['denmap_nx']=0;
+  par.SkZp_Opt['I']['denmap_ny']=0;
+  par.SkZp_Opt['F']['denmapmaglim']=17.5;
+  widthcolor=0.04;
+  JKsplotrange="-1:5";
+  JHplotrange="-1:4";
+  HKsplotrange="-1:3";
+  sigmaclipSTD=0;
+
+  #START
+  funct.InputDataInitialize(optfiles=[scriptname+".opt"], select='catalog');
+  DpAls.SetSkZp_Opt();
+
+
+die "!!!Error: problems with the list of filter in the standard catalog ($filterstdcat)\n" if(!$filterstdcat);
+my@spcm=split ',',$stdposcoomag;
+die "!!!Error: problems with the list of position of coordinates and magnitudes in the standard catalog ($stdposcoomag)\n" if($spcm[0]>=$spcm[1]);
+  $calfile=$workname.".calpar";
+my($nfltrstd,$lpfs)=0;
+if($filterstdcat==3){$nfltrstd=$filterstdcat; $filterstdcat="J,H,Ks";}
+if($filterstdcat==5 || $filterstdcat==-3){ $nfltrstd=$filterstdcat; $filterstdcat="J,H,Ks,Y,Z";}
+my@filterstdcat=split m.,.,$filterstdcat;
+$nfltrstd=@filterstdcat if(!$nfltrstd);
+my%filterstdcat;
+for my$i(0..$#filterstdcat){$filterstdcat{$filterstdcat[$i]}=$i;}
+($lpfs=$filterstdcat)=~s/(\w+)/$fff{$1}/g;
+$filterstdcat=~s.,.|.g;
+
+$alfclean=0 if($alfclean=~/n/);
+  $radexc=(split m.,.,$stdcut)[0];
+$stdcut=~s.,. .g;
+my@magcut=split m.,.,$magcut;
+if(@magcut<@filterstdcat){
+  for(my$ii=@magcut; $ii<@filterstdcat; $ii++){
+  $magcut[$ii]=$magcutdef;
+  }
+}
+@coeffpbsf=split ':',$coeffpbsf;
+for my$i(0..$#fff){$coeffpbsf[$i]=$coeffpbs if(!$coeffpbsf[$i]); $coeffpbsf[$i]=~s.,. .g;}
+#$skzmagcorr=0 if($skzmagcorr=~/n/);
+#my@zxpo=split m.,.,$zeropoint;
+#@zxpo=(0,0,0) if($skzmagcorr==0);
+#my(@zxpoc)=@zxpo;
+#@zxpoc=(0,0,0) if($skzmagcorr==-1);
+  zxpoc=[0,0,0];
+
+if($wantedfilter){
+  if($wantedfilter=~m.,.){
+    my@wantedfilter=split ',',$wantedfilter;
+    $wantedfilter="";
+    for my $wf(@wantedfilter){ $wantedfilter.=$fff{$wf}.",";}
+    chop $wantedfilter;
+  }
+}else{
+  $wantedfilter=-1;
+}
+
+select((select(STDOUT),$|=1)[0]);
+
+if(!-e $stdcat){die "!!!Error: problems with the catalogue $stdcat\n";}else{print"Using the standard catalog: $stdcat\n";}
+
+$notsamecol=1 if($notsamecol=~/^y/);
+$notsamecol=0 if($notsamecol=~/^n/);
+if($notsamecol!=0 && $notsamecol!=1){die "!!!Error: the value of $notsamecol is wrong!\n";}
+
+
+if(-e $lockfile){die "!!!Error: it seems that there is already a VVV-SkZ_pipeline running in this directory!\n";}else{open(LCK,">$lockfile");print LCK $lock=1;close LCK;}
+my@lstimg;
+if($alfclean==-1 && !-e "${workname}-dat"){
+    unlink $lockfile;
+    die "!!!Error: You ask to not re-execute the astrometrizing program but it's not already runned!\n";
+}
+if($alfclean!=-1){
+open(DT, ">$Metrdatafile") or die "!!!Error: problems opening $Metrdatafile\n";
+open(FIN, $imgdatafile) or die "\n!!!Error: There is not the file $imgdatafile\n";
+print "\nAstrometrizing[$cleanway $sigmacliprej]...\n";
+$sigmacliprej=$sigmacliprej+1.;
+while(<FIN>){
+  next if(/^#/);
+  chomp;
+  my @t=split;
+  if(!-e "$t[0].$alfsuff"){
+    unlink $lockfile;
+    die "!!!Error: $t[0].$alfsuff doesn't exist!\n";
+  }
+  push @lstimg,$t[0];
+
+  my$mpos=$filterstdcat{$t[4]}; $mpos=-1 if(!(defined $mpos));
+
+#produced input data for metrVVVsel
+  my$datfn="${workname}:$t[-4]:$t[-5]:$t[2]:$t[-2]";
+  my$fltob=$t[4].$t[-4];my$zzpp;
+  ASDF:for my$keyk (keys %mggm){
+  if($fltob=~/$keyk/){
+  $zzpp=$mggm{$keyk}; last ASDF;
+  }
+  }
+  $zzpp=1 if(!(defined $zzpp));
+
+  print DT join(" \x20 ", "$t[0].$alfsuff", $mpos, $zzpp, $sigmacliprej, $chicutrej, "$datfn"),"\n";
+  $datfn="${workname}_$t[-4]_$t[-5]_$t[2]_$t[-2].$t[4]-dat";
+  unlink $datfn, "$t[0].${alfsuffcl}-dat";
+  symlink "$t[0].${alfsuff}-dat", $datfn;
+  symlink "$t[0].${alfsuff}-dat", "$t[0].${alfsuffcl}-dat";
+
+#produced fn.radec for metrVVVsel
+  my@nxny; open(ALF,"$t[0].$alfsuff");
+  $_=<ALF>;$_=<ALF>;@nxny=(split)[1,2];
+  open(CRN, ">$t[0].xy"); ($nxny[2],$nxny[3])=($framerem==0)?(0,0): ($framerem>0)? (60,60): (0,60);
+  $nxny[0]-=$nxny[2];$nxny[1]-=$nxny[3];
+  print CRN sprintf("%10.4f %10.4f\n%10.4f %10.4f\n%10.4f %10.4f\n%10.4f %10.4f\n",@nxny[2,3,0,3,0,1,2,1]);  #$nxny[2], $nxny[3],$nxny[0], $nxny[3], $nxny[0], $nxny[1],$nxny[2],$nxny[1]);
+  $_=<ALF>;
+  while(<ALF>){@nxny=(split)[1,2]; print CRN sprintf("%10.4f %10.4f\n",$nxny[0],$nxny[1]);}
+  close ALF;close CRN;
+  `${pathdir}xy2sky -d $t[0].fits "@"$t[0].xy > $t[0].radec`;
+  }
+close FIN; close DT;
+}
+
+  ($hjkl,@plmn, @plmx, $plan)=(360);
+{my (@tq, @clnps);
+    push @clnps, qq%set terminal postscript enhanced color\nset output "${workname}_clean.ps"\n%;
+  $crnr="$workname.crnr";
+
+$prewait=time;
+while(-e "WAIT" || -e "${scriptname}.WAIT"){  sleep 10;}
+die "!!!Obbedisco!\n\n" if(-e "STOP" || -e "${scriptname}.STOP");
+$start+=time-$prewait;
+
+###Astrometrizing here!
+if($alfclean!=-1){
+  unlink "${workname}-dat";
+  `${pathdir}metrVVVsel $Metrdatafile $framerem $cleanway $cleanratio $regflag $stdcat $stdposcoomag,$nfltrstd,$lpfs ${workname}STD.stdcat ${workname}-dat`;
+  print "$? ",$?>>8,"\n",`date`;
+  if($regflag){`tar -cjf ${workname}-reg.tar.bz2 *.$alfsuff.frm.reg *.$alfsuffcl.reg *.$alfsuffrej.reg`;
+    if($regflag<0){unlink glob("*.$alfsuff.frm.reg"), glob("*.$alfsuffcl.reg"),glob("*.$alfsuffrej.reg");}}
+  `tar -cjf ${workname}-dat.tar.bz2 ${workname}-dat *.${alfsuff}-dat`;
+}
+  open(DAT,"${workname}-dat");
+  $_=<DAT>;@plmn=(split)[-2,-1];s._. .g;print;
+  $_=<DAT>;@plmx=(split)[-2,-1];s._. .g;print;
+  $_=<DAT>;$plan=(split)[-2];s._. .g;print;print"\n";
+close DAT;
+$stdcat="${workname}STD.stdcat";
+$stdposcoomag="1,3";
+open(FIN, $imgdatafile) or die "\n!!!Error: There is not the file $imgdatafile\n";
+while(<FIN>){
+  next if(/^#/);
+  chomp;
+ my($fn,$filter)=(split)[0,4];
+  unlink "$fn.radec";
+
+  my $mn=(-e "${fn}.${alfsuffcl}") ? `${pathdir}file_stat -lqn  ${fn}.${alfsuffcl}` : 0;
+  if($mn<4){
+    print "!!!Error: file ${fn}.${alfsuffcl} has no stars or doesn't exist! Something wrong in the previous step. Quitting!\n\[$mn\]\n";
+    goto EENDD;
+  }
+  open(DAT,"${fn}.${alfsuffcl}-dat");
+  while(<DAT>){last if(/#zp/)}
+  my($zpfn, $afn, $bfn, $cfn, $kfn)=(split)[2..6];
+  close DAT;
+    push @clnps, qq%set title "$fn"\nset xlabel "X"\nset ylabel "Y"\nplot [][] "${fn}.$alfsuffcl" u 2:3 ps .1 ti "kept", "${fn}.$alfsuffrej" u 2:3 ps .1 lc 3 ti "rejected", "${fn}.$alfsuff.frm" u 2:3 ps .1 lc 2 ti "removed"\n%.
+qq%set xlabel "$filter"\nset ylabel "Log10 err $filter"\nset grid\n%.
+qq%plot [7:25][-2.75:1.5] "${fn}.$alfsuffcl" u 4:(log10(\$5)) ps .1 ti "kept", "${fn}.$alfsuffrej" u 4:(log10(\$5)) ps .1 lc 3 ti "rejected", "${fn}.$alfsuff.frm" u 4:(log10(\$5)) ps .1 lc 2 ti "removed",%.
+qq% $bfn*((.4*(x-$zpfn))**4+1+$afn)**.25-3+$cfn lc 3 lt 1 ti "$zpfn $afn $bfn $cfn : $kfn", %.   ##%##
+qq% $bfn*((.4*(x-$zpfn))**4+1+$afn)**.25-3+$cfn lc 3 lt 1 noti, $bfn*((.4*(x-$zpfn))**4+1+$afn)**.25-3+$cfn+log10($sigmacliprej) lt 2 lc 5 noti\n%.
+qq%set ylabel "Chi2"\nplot [7:25][:15] "${fn}.$alfsuffcl" u 4:8 ps .1 ti "kept", "${fn}.$alfsuffrej" u 4:8 ps .1 lc 3 ti "rejected", "${fn}.$alfsuff.frm" u 4:8 ps .1 lc 2 ti "removed"\nunset grid\n%;
+  }
+close FIN;
+open(CLNGP, ">${workname}_clean.gp"); print CLNGP @clnps; close CLNGP;   ##%##
+open(GPLT,"|gnuplot"); print GPLT @clnps; close GPLT;
+}
+
+
+  (%regroup,%datahash,%obfov,%obj,%cal,%o_t,%t_tfam,%tfam_o,%t_o,%fov_flt,%tfam_f,%t_f,@calps,%qazstdat)=();
+    push @calps, qq%set terminal postscript enhanced monochrome\nset output "${workname}_cal.ps"\n%;
+
+if(-e $calibfile){
+  open(CF, "$calibfile");
+  while(<CF>){
+    next if(/^\x23/ || /^\s*$/);
+    my ($fn, @cpar)=split;
+    $calpar{$fn}=join " ", @cpar;
+  }
+  close CF;
+}
+
+open(CALF, ">$calfile");
+if(!open(DT, $imgdatafile)){
+unlink $lockfile;
+die "!!!Error: problems with input file $imgdatafile\n";}
+CICLE:
+while(<DT>){
+  our (@input, $num_input);
+  our ($pathfn, $fwhm, $chp, $gaincor, $filter, $expt, $am);
+  our ($pathfn2, $imadir, $fn, @wcs, @othr)=();
+  next CICLE if(/^\x23/ || /^\s*$/);
+  chomp;
+  @input=split;
+  ($fn, $fwhm, $chp, $gaincor, $filter, $expt, $am, @othr)=@input;
+
+  WAIT:
+  $prewait=time;
+  while(-e "WAIT" || -e "${fn}.WAIT" || -e "${scriptname}.WAIT"){    sleep 10;  }
+  if(-e "STOP" || -e "${fn}.STOP" || -e "${scriptname}.STOP"){
+unlink $lockfile;
+ die "!!!Obbedisco!\n\n";}
+  if(-e "${fn}.SKIP"){    print "\nSkip to the next image"; goto END;  }
+  $start+=time-$prewait;
+
+  {
+      my $size=(-e "${fn}.$alfsuffcl") ? `${pathdir}file_stat -lqn "${fn}.$alfsuffcl"` : 0;
+      if(!-e "${fn}.$alfsuffcl" || $size<4 ){
+        print "\nError: file ${fn}.$alfsuffcl is empty or doesn't exist! Skip to the next image";
+        goto END;
+      }
+my($s,$a);
+    if($alfclean==0){
+      `cat ${fn}.$alfsuffrej >> ${fn}.$alfsuffcl`;
+    }elsif($alfclean==-1 && -e "$fn.$alfsuffrec"){
+      `cat ${fn}.$alfsuffrec >> ${fn}.$alfsuffcl`;
+    }
+
+    print "$fn.$alfsuff [", $a=`${pathdir}file_stat -lqn "${fn}.$alfsuff"`-3,"]=>[",   $s=`${pathdir}file_stat -lqn  "${fn}.$alfsuffcl"`-3, "](", $s-$a,")\n";
+
+    #my @out_fn=("$fn.std", "$fn.xy", "$fn.stdxy", "$fn.stdat", "${fn}_cal.mch", "${fn}_cal.raw", "${fn}.cal");
+    my @out_fn=("$fn.std", "$fn.xy", "$fn.stdxy", "$fn.stdat", "${fn}.cal");
+    for(my $i=0; $i<@out_fn; $i++){
+      -e $out_fn[$i] and unlink $out_fn[$i];
+    }
+  }
+
+
+
+  $datahash{$fn}=$_;
+  my($fam, $obname, $tile, $offset)=($input[-5], $input[-4], $input[-3], $input[-2]);
+  $fam=ord($fam)-ord("a")+1 if($fam=~/[a-h]/);
+  my
+  my $kkey=$tile."_".$fam;
+  if(!($tfam_o{$kkey}=~/$kkey/)){$tfam_o{$kkey}.=$obname." ";}
+  $tfam_f{$kkey}.=$fn." ";
+  $t_f{$tile}.=$fn." ";
+  if(!($t_tfam{$tile}=~/$kkey/)){$t_tfam{$tile}.=$kkey." ";}
+  $obfov{"$obname $fam $chp $offset"}.="$fn ";
+  $o_t{$obname}=$tile; #Which tile is an OB
+  if(!($t_o{$tile}=~/$obname/)){$t_o{$tile}.=$obname." ";}
+  if(!($obj{$obname}=~/$offset/)){$obj{$obname}.=$offset." ";}
+
+
+  print "=> $fn [$filter] :\n";
+
+  if(($filter=~/($filterstdcat)/)){
+  my (@q,@b);
+
+ STD:
+  print "Finding stars for calibration ";
+  print "with SkZ-magnitude correction "if($skzmagcorr);
+  print "... ";
+  my $cmd;
+  $cmd=`${pathdir}file_stat -lqn  $fn.stdcat`;
+#  my(@fnplmn);open(ALFD,"$fn.${alfsuff}-dat");$_=<ALFD>;@fnplmn=(split)[1,2];close ALFD;
+
+  my@dfshg=split m.:.,$magcut[$filterstdcat{$filter}];
+  my$zxpo=$zxpo[$filterstdcat{$filter}]+0;
+  $zxpo=0;
+  print "$cmd ($stdcut $magcut[$filterstdcat{$filter}] $zxpo) ";
+  `${pathdir}stdVVVcleanNout $fn.stdcat $fn.$alfsuffcl $plmn[0] $plmn[1] $stdcut $dfshg[0] $dfshg[1] $filterstdcat{$filter} $notsamecol $zxpo $fn`;
+
+   print "",`${pathdir}file_stat -lqn $fn.cal`," \x20";
+   $qazstdat{$kkey}.="$fn.stdat ";
+
+{
+if(-e "${fn}.cal.rr"){my@rjr; open(REJR,"${fn}.cal.rr"); @rjr=<REJR>;close REJR; rename "${fn}.cal", "$fn.cal.tmp"; open(TCAL, "$fn.cal.tmp");open(CAL, ">$fn.cal");
+while(<TCAL>){my @mm=(split)[3,5];my$flg=1;
+for my$rjr(@rjr){ my@qqqq=split/\s+/,$rjr; $flg=0 if(@qqqq==4 && $qqqq[0]<=$mm[1] && $mm[1]<=$qqqq[1] && $qqqq[2]<=$mm[0] && $mm[0]<=$qqqq[3]); }
+print CAL if($flg);}
+close TCAL; close CAL; unlink "$fn.cal.tmp";}
+print "",`${pathdir}file_stat -lqn $fn.cal`,"\n";
+}
+
+  my$flagfit=($notsamecol)? -2 :2;
+  $flagfit=-2 if($filter=~/Y|Z/);
+
+  if($calpar{$fn}){
+    print "Using given calibrating parameters: $calpar{$fn}\n";
+    @b=(split ' ',$calpar{$fn});
+  }else{
+    print "Finding calibrating parameters ";
+    print "with SkZ-magnitude correction "if($skzmagcorr);
+    print "... ";
+    print "\n",@q=`${pathdir}vvvpbswlsqfit_erry  ${fn}.cal $flagfit $coeffpbsf[$fff{$filter}] `,"\n";
+#    if($filter=~/Y|Z/){
+#      @b=((split ' ',$q[4])[1..2], 0, 0);
+#    }else{
+      @b=((split ' ',$q[5])[1..2],(split ' ',$q[4])[1..2]);
+#    }
+  }
+
+  {
+    my$zpe=($b[1]>0.01)?$b[1]: 0.01;
+    my$bbbb=$b[0]-3*$zpe;my $jfjf=$b[0]-3*$zpe+$b[2]*2;$bbbb=$jfjf if($bbbb>$jfjf);
+    my$cccc=$b[0]+3*$zpe; $jfjf=$b[0]+3*$zpe+$b[2]*2;$cccc=$jfjf if($cccc<$jfjf);
+    $bbbb=sprintf("%.2f",$bbbb);
+    $cccc=sprintf("%.2f",$cccc);
+    if($bbbb==$cccc){$bbbb-=0.03;$cccc+=0.03;}
+    my($aaaa,$dddd)=($bbbb-.5,$cccc+.5);
+    my$calpst=qq%set xlabel "J-%.(($flagfit>0)?"Ks":"H").qq%"\nset title "$fn"\nset ylabel "${filter}_{STD}-$filter"\n%;
+    $calpst.=qq%plot [][$bbbb:$cccc] "${fn}.cal" u %.(($flagfit>0)?6:8).qq%:4:5 w err pt 2 noti, $b[0]+$b[2]*x, $b[0]-$b[1]+$b[2]*x ti "-1 sigma",$b[0]+$b[1]+$b[2]*x ti "+1 sigma"\n%;
+    $calpst.=qq%plot [][$aaaa:$dddd] "${fn}.cal" u %.(($flagfit>0)?6:8).qq%:4:5 w err pt 2 noti, $b[0]+$b[2]*x, $b[0]-$b[1]+$b[2]*x ti "-1 sigma", $b[0]+$b[1]+$b[2]*x ti "+1 sigma"\n%;
+    push @calps, $calpst;
+  }
+
+  if($calpar{$fn}){
+    $cal{$fn}=$calpar{$fn};
+  }else{
+    $b[1]=0;
+    $cal{$fn}=join " ",@b;
+  }
+
+  print CALF join "  ", $fn, @b,"\n";
+}else {print "Not a valid filter for the calibration.\n"; }
+
+
+
+ LIST:
+  $regroup{sprintf("%s %3d  %8s \x20 %-3s %3d %5d",$tile, $fam, $obname, $filter, $chp, $offset)}.="${fn}.$alfsuffcl ";
+
+ END:
+  print "\n";
+}
+close DT;
+
+{
+open(GPLT,"|gnuplot"); print GPLT @calps; close GPLT;
+}
+
+
+{print"Tile\x20 fam\x20 \x20 \x20OB \x20\x20filter\x20chip\x20offset \x20 file\n";
+for my $i (sort keys %regroup){print "$i \x20 \x20 $regroup{$i}\n";}print "\n";
+}
+
+  WAIT:
+  $prewait=time;
+  while(-e "WAIT" || -e "Calibration.WAIT" || -e "${scriptname}.WAIT"){    sleep 10;  }
+  if(-e "STOP" || -e "Calibration.STOP" || -e "${scriptname}.STOP"){
+unlink $lockfile;
+ die "!!!Obbedisco!\n\n";}
+  $start+=time-$prewait;
+
+print "%%%%%%Calibration%%%%%%\n\n";
+my%fco_;
+for my $obfovk (sort keys %obfov){
+  print sprintf("%-14s",$obfovk), "  ";
+  my@q=split/\s+/,$obfov{$obfovk};
+  my(%ff,$c);
+  for my$f(@q){ #cicle over images in same OB/FOV
+    $ff{(split/\s+/,$datahash{$f})[4]}=$f;   #whick filter is which image
+  } 
+  for my$j (@fff){  #Cicle over filters
+    $ff{$j}="-" if(!$ff{$j});   #If a filter not present, set as '-'
+    print "$j:$ff{$j}    ";
+  }
+  print "\n";
+  $obfov{$obfovk}=join " ",$ff{"J"}, $ff{"H"}, $ff{"Ks"}, $ff{"Y"}, $ff{"Z"};  #redefining th entry of OB/FOV but in order
+  my($nnn,$sss);
+  ($nnn="$workname $obfovk")=~s/ /_/g;   #string workname_obname_fam_chp_off
+  ($sss=$obfovk)=~s/^(\S+) /$o_t{$1} /;  #string tile_fam_chp_off  => general FOV
+  if($ff{"J"}ne"-" && $ff{"H"}ne"-" && $ff{"Ks"}ne"-"){  #If there are all J-H-Ks
+    {
+    my ($mch, $flag, $sigma, @files)=("${nnn}_calJHKs.mch", 1, 5, $ff{"J"}.".$alfsuffcl", $ff{"H"}.".$alfsuffcl", $ff{"Ks"}.".$alfsuffcl");
+    unlink "${nnn}_calJHKs.raw","${nnn}_calJHKs.tfr";
+    open(MM,"|${pathdir}VVV-DoMatch.pl");print MM "$mch 1 $flag $sigma 2 cal ", join (" ", @files, "\n");print MM "$mch 0 $flag $sigma 2 cal ", join (" ", @files, "\n");close MM;
+    }
+    my$typtr=$notsamecol+3;
+    `${pathdir}calibVVV ${nnn}_calJHKs 3  $typtr $cal{$ff{"J"}} $cal{$ff{"H"}} $cal{$ff{"Ks"}}`;
+    rename "${nnn}_calJHKs.raw_cal_1.als", "${nnn}.J";
+    rename "${nnn}_calJHKs.raw_cal_2.als", "${nnn}.H";
+    rename "${nnn}_calJHKs.raw_cal_3.als", "${nnn}.Ks";
+    print "\t==>\x20${nnn}.J\x20\x20\x20\x20\x20${nnn}.H\x20\x20\x20\x20\x20\x20${nnn}.Ks\n";
+    #Adding to FOV-Filter the name of the file
+    $fov_flt{"$sss J"}.="${nnn}.J ";
+    $fov_flt{"$sss H"}.="${nnn}.H ";
+    $fov_flt{"$sss Ks"}.="${nnn}.Ks ";
+
+  }elsif($ff{"Ks"}ne"-"){ #If there is only Ks: epoch!
+    my $j=$obfovk;$j=~s/ /_/g;
+    $j=~s/^(.+)_(.+_.+_.+)$/${workname}_$o_t{$1}j_$2.J/;  #As J use the J from obname=tile+'j' the first J vailable
+    my ($mch, $flag, $sigma, @files)=("${nnn}_calKs.mch", 1, 5, $ff{"Ks"}.".$alfsuffcl", $j);
+    unlink "${nnn}_calKs.raw","${nnn}_calKs.tfr";
+    open(MM,"|${pathdir}VVV-DoMatch.pl");print MM "$mch 1 $flag $sigma 2 cal ", join (" ", @files, "\n");print MM "$mch 0 $flag $sigma 2 cal ", join (" ", @files, "\n");close MM;
+    `${pathdir}calibVVV ${nnn}_calKs 1  1 $cal{$ff{"Ks"}}`;
+    rename "${nnn}_calKs.raw_cal_1.als", "${nnn}.Ks";
+    unlink "${nnn}_calKs.raw_cal_2.als";
+    print "\t==> ${nnn}.Ks\n";
+    #Adding to FOV-Filter the name of the file
+    $fov_flt{"$sss Ks"}.="${nnn}.Ks "; 
+
+  }elsif($ff{"Y"}ne"-" && $ff{"Z"}ne"-"){   #if there is Y-Z
+    unlink "${nnn}.Y", "${nnn}.Z";
+    if(0 && "YZ"=~/($filterstdcat)/){
+      symlink $ff{"Y"}.".$alfsuffcl", $ff{"Y"}.".mag";
+      `${pathdir}calibVVV $ff{"Y"} 1 0 $cal{$ff{"Y"}} `;
+      rename $ff{"Y"}.".mag_cal", "${nnn}.Y";
+      $fov_flt{"$sss Y"}.="${nnn}.Y ";
+      symlink $ff{"Z"}.".$alfsuffcl", $ff{"Z"}.".mag";
+      `${pathdir}calibVVV $ff{"Z"} 1 0 $cal{$ff{"Z"}} `;
+      rename $ff{"Z"}.".mag_cal", "${nnn}.Z";
+      $fov_flt{"$sss Z"}.="${nnn}.Z ";
+    }else{
+      copy $ff{"Y"}.".$alfsuffcl", "${nnn}.Y";
+      $fov_flt{"$sss Y"}.="${nnn}.Y ";
+      copy $ff{"Z"}.".$alfsuffcl", "${nnn}.Z";
+      $fov_flt{"$sss Z"}.="${nnn}.Z ";
+    }
+    print "\t==>\x20${nnn}.Y\x20\x20\x20\x20\x20${nnn}.Z\n";
+  }
+  $nnn=join " ",(split m.\s+.,$obfovk)[2,3];
+  $fco_{$nnn}="";
+  print "\n\n";
+}
+
+$prewait=time;
+while(-e "WAIT" || -e "${scriptname}.WAIT"){  sleep 10;}
+if(-e "STOP" || -e "${scriptname}.STOP" || -e "Reunion.STOP"){
+unlink $lockfile;
+die "!!!Obbedisco!\n\n";}
+$start+=time-$prewait;
+
+print "\n\n%%%%%%Reunion%%%%%%\n";
+$nfltrstd=5 if($nfltrstd==-3);
+  (@totar)=($imgdatafile, "$imgdatafile.html", $OptFile);
+for my $ttf ("${workname}_cal.ps","${workname}_clean.ps", "${workname}-dat", $stdcat, $getinfodatafile, $calfile){push @totar, $ttf if(-e $ttf);}
+  (@elit,@t_ty,%tflt, %tstc, $tttt, $fmst, @lststr)=();
+  $mchmd="match";
+
+###SUBRUTINES####
+sub BuildCtlg{
+  if($mchmd=~/match/){
+    my$fmst0=$fmst*1e+8;
+    `${pathdir}fixCtlg ${rraww}raw $fmst0 ${workname}-dat $wantedfilter ${rraww}Ctlg`;
+  }elsif($mchmd=~/union/){
+   $_=`${pathdir}unionVVVstripe 0 $tstc{$tttt} ${rraww}Ctlg`;
+   @lststr=split;
+  }
+    push @totar, "${rraww}Ctlg";
+}
+
+sub PlotDmCMD {
+  my $titlegp="${idxwntk}";$titlegp=~s/_/\\\\_/g;
+  open(CTLG,"${rraww}Ctlg");open(MCD, ">${rraww}mc");while(<CTLG>){if(!/^#/){my@qqq=split;print MCD sprintf("%.4f %.4f %.4f %.4f\n", $qqq[9],($qqq[5]-$qqq[9]),($qqq[5]-$qqq[7]),($qqq[7]-$qqq[9]));}}close CTLG; close MCD;
+  `${pathdir}convfreqSkZ -i ${rraww}mc -o ${rraww}mcfr -x 8.5 -X 20.5 -wx 1  -sx 1  -y -2 -Y 6 -wy $widthcolor -sy $widthcolor --format=matrix`;
+  `${pathdir}convfreqSkZ -i ${rraww}mc -o ${rraww}mfr  -x 8.5 -X 20.5 -wx .1 -sx 0.01`;
+
+    open(GP,"|gnuplot");print GP qq%set terminal postscript enhanced\nset output "${idxwntk}_cmd.ps"\nset title "$titlegp"\n%;
+    print GP qq%set xlabel "J-Ks"\nset ylabel "Ks"\nset xtics -2,.5\nset ytics 7.5,1\nset grid\n%;
+    print GP qq%plot [-1:6][21:7] "${rraww}mc" u 2:1  w d noti\n%;
+    print GP qq%set xlabel "(J-H)-1.47(H-Ks)"\n%;
+    print GP qq%plot [-1:3][21:7] "${rraww}mc" u (\$3-1.47*\$4):1  w d noti\n%;
+    print GP qq%set yrange [] noreverse\nset xlabel "H-Ks"\nset ylabel "J-H"\nset ytics -2,.5\n%;
+    print GP qq%plot [-1:4][-2:5] "${rraww}mc" u 4:3  w d noti\n%;
+    print GP qq%set yrange [] noreverse\nset xlabel "Ks"\nset ylabel "num of stars (bin width=0.1mag  step=0.01)"\nset ytics auto\n%;
+    print GP qq%plot [][] "${rraww}mfr" w l noti\n%;
+    print GP qq%set yrange [] noreverse\nset xlabel "Ks"\nset ylabel "Log10 num of stars (bin width=0.1mag  step=0.01)"\nset ytics auto\n%;
+    print GP qq%plot [][] "${rraww}mfr" u 1:(log10(\$2)) w l noti\n%;
+    print GP qq%set xlabel "J-Ks"\nset ylabel "num of stars (bin width=$widthcolor)"\nset ytics auto\n%;
+    for my$mag (9..20){print GP qq%set title "Ks=$mag"\nplot [][] "${rraww}mcfr" u 1:%,$mag-7,qq% w l noti\n%;}
+    print GP qq%quit\n%;close GP;
+
+    unlink "${rraww}mc", "${rraww}mcfr", "${rraww}mfr";
+    push @totar, "${idxwntk}_cmd.ps";
+
+    my($denmap)=("${idxwntk}_denmap.fits");
+    unlink $denmap;
+    open(RADEC,">${rraww}radec");open(CTLG, "${rraww}Ctlg");
+    while(<CTLG>){next if(/^#/);
+      my@vvv=split;print RADEC "$vvv[1] $vvv[2] J2000\n" if ($vvv[9]<=$denmapmaglim);}
+    close RADEC; close CTLG;
+    `${pathdir}sky2xy $tyuiop.fits "@"${rraww}radec | cut -d'>' -f 2 > ${rraww}xy`;
+    unlink "${rraww}radec";
+    print "Image used to get x,y: $tyuiop\n";
+    if($denmap_nx>0 && $denmap_ny>0){
+      `${pathdir}convfreqSkZ -i ${rraww}xy -wx $denmapbin --format=fits -o $denmap --shape=elliptic -nx $denmap_nx  -ny $denmap_ny`;
+    }else{
+      `${pathdir}convfreqSkZ -i ${rraww}xy -wx $denmapbin --format=fits -o $denmap --shape=elliptic`;
+    }
+    unlink "${rraww}xy";
+
+    `${pathdir}fits_modhdr $denmap "CATALOG" "${rraww}Ctlg"`;
+    `${pathdir}fits_modhdr $denmap "MAG-CUT" $denmapmaglim`;
+    `${pathdir}cphead $tyuiop.fits $denmap  CTYPE1 CTYPE2 CRVAL1 CRVAL2 CRPIX1 CRPIX2 CD1_1 CD1_2 CD2_1 CD2_2 PV2_1 PV2_2 PV2_3 PV2_4 PV2_5`;
+    push @totar, "$denmap";
+}
+
+sub TooMASScmpplot {
+    print"\n $zxpoc[0] $zxpoc[1] $zxpoc[2]\n";
+    my ($dbg2m, $dbg2ms);
+    if($debug){  ($dbg2m, $dbg2ms)=("STD-${idxwntk}.out", "STD-${idxwntk}.outs")}
+    print "Comparison with $stdcat $idxwntk.stdat ...\n";
+    print`${pathdir}cmpSTD-Ctlg 1,11,.34 $radexc $sigmaclipSTD $stdcat        $stdposcoomag,$nfltrstd ${rraww}Ctlg STD-${idxwntk}.cat`;  # $zxpoc[0],$zxpoc[1],$zxpoc[2] $dbg2m`;
+    my$calposcoomag="2,4";
+         `${pathdir}cmpSTD-Ctlg 1,11,.34 $radexc $sigmaclipSTD $idxwntk.stdat $calposcoomag,$nfltrstd ${rraww}Ctlg STD-${idxwntk}.cats`; # $zxpoc[0],$zxpoc[1],$zxpoc[2] $dbg2ms`;
+    my$cmpmaxdist=1;
+#    unlink $dbg2m, $dbg2ms if(!$debug);
+    push @totar, "$idxwntk.stdat";
+    push @totar, "STD-${idxwntk}.cat", "STD-${idxwntk}.cats", "STD-${idxwntk}.cat-rej";
+
+    my$i="STD-${idxwntk}.cat";
+    my$is=$i."s";
+    my($tmpJ,$tmpH,$tmpK,$tmpY,$tmpZ);
+    while(-f ($tmpJ="ZJ".chr(rand(26)+ord("A")).(time)) || -f "$tmpJ.fr"){}
+    while(-f ($tmpH="ZH".chr(rand(26)+ord("A")).(time)) || -f "$tmpH.fr"){}
+    while(-f ($tmpK="ZK".chr(rand(26)+ord("A")).(time)) || -f "$tmpK.fr"){}
+    if($nfltrstd>3){ while(-f ($tmpY="ZY".chr(rand(26)+ord("A")).(time)) || -f "$tmpY.fr"){} }
+    if($nfltrstd>4){ while(-f ($tmpZ="ZZ".chr(rand(26)+ord("A")).(time)) || -f "$tmpZ.fr"){} }
+
+    open(FIN,$i);open(FOUT,">$i.g");open(FOUR,">$i.b");open(FOUJ,">$tmpJ");open(FOUH,">$tmpH");open(FOUK,">$tmpK");open(FOUY,">$tmpY")if($nfltrstd>3);open(FOUZ,">$tmpZ")if($nfltrstd>4); open(FODR,">$i.r");open(FODX,">$i.x");open(FODY,">$i.y");
+    my($posJS,$posHS,$posKS,$posYS,$posZS)=(2,4,6,8,10);
+    my($posJV,$posHV,$posKV,$posYV,$posZV)=($posJS+2*$nfltrstd,$posHS+2*$nfltrstd,$posKS+2*$nfltrstd,$posYS+2*$nfltrstd,$posZS+2*$nfltrstd);
+    my(@qqqq,$ncmpfld);
+    while(<FIN>){
+      next if(/^#/);
+      @qqqq=split;
+      if($qqqq[3]*$qqqq[5]*$qqqq[7]!=0){print FOUT;
+        print FOUJ sprintf("%.4f %.4f\n",$qqqq[$posJV], ($qqqq[2]-$qqqq[$posJV]));
+        print FOUH sprintf("%.4f %.4f\n",$qqqq[$posHV], ($qqqq[4]-$qqqq[$posHV]));
+        print FOUK sprintf("%.4f %.4f\n",$qqqq[$posKV], ($qqqq[6]-$qqqq[$posKV]));
+        print FOUY sprintf("%.4f %.4f\n",$qqqq[$posYV], ($qqqq[8]-$qqqq[$posYV])) if($nfltrstd>3);
+        print FOUZ sprintf("%.4f %.4f\n",$qqqq[$posZV], ($qqqq[10]-$qqqq[$posZV])) if($nfltrstd>4);
+        #print FOUJK sprintf("%.4f %.4f\n",$qqqq[6+2*$nfltrstd], ($qqqq[2]-$qqqq[2+2*$nfltrstd]-$qqqq[8]+$qqqq[8+2*$nfltrstd]));
+      }else{print FOUR;}
+      print FODR $qqqq[-5],"\n";
+      print FODX $qqqq[-4],"\n";
+      print FODY $qqqq[-3],"\n";
+
+    }
+    $ncmpfld=@qqqq;
+    for(my$qqqq=0; $qqqq<$ncmpfld; $qqqq++){    print FOUR  " 0";} print FOUR "\n";
+    close FIN; close FOUT;close FOUR;close FOUJ;close FOUH;close FOUK;close FOUY if($nfltrstd>3);close FOUZ if($nfltrstd>4); close FODR;close FODX;close FODY;
+
+    `convfreqSkZ -i $tmpJ -o $tmpJ.fr -x 8 -X 17 -y -.502 -Y .502 -wx .1 -wy 0.02 -sx .1 -sy 0.004 --format=listgp`;
+    `convfreqSkZ -i $tmpH -o $tmpH.fr -x 8 -X 16 -y -.502 -Y .502 -wx .1 -wy 0.02 -sx .1 -sy 0.004 --format=listgp`;
+    `convfreqSkZ -i $tmpK -o $tmpK.fr -x 8 -X 16 -y -.502 -Y .502 -wx .1 -wy 0.02 -sx .1 -sy 0.004 --format=listgp`;
+    `convfreqSkZ -i $i.r  -o $i.rfr -wx .05 -sx .05 -x  0           -X $cmpmaxdist`;
+    `convfreqSkZ -i $i.x  -o $i.xfr -wx .05 -sx .05 -x -$cmpmaxdist -X $cmpmaxdist`;
+    `convfreqSkZ -i $i.y  -o $i.yfr -wx .05 -sx .05 -x -$cmpmaxdist -X $cmpmaxdist`;
+
+open(FINJ,">$tmpJ");open(FINH,">$tmpH");open(FINK,">$tmpK");
+print FINJ "8 0.02 0\n17 0.02 0\n";
+print FINH "8 -0.02 0\n17 -0.02 0\n";
+close(FINJ);close(FINH);close(FINK);
+
+    unlink "$i.r", "$i.x", "$i.y";
+####
+    $posJS++;$posHS++;$posKS++;$posYS++;$posZS++;
+    $posJV++;$posHV++;$posKV++;$posYV++;$posZV++;
+    my($posJE,$posHE,$posKE,$posYE,$posZE)=($ncmpfld-6-$nfltrstd, $ncmpfld-5-$nfltrstd, $ncmpfld-4-$nfltrstd, $ncmpfld-3-$nfltrstd, $ncmpfld-2-$nfltrstd);
+    open (GP, "|gnuplot");
+    my $titlegp="${idxwntk} \x20 \x20 STD vs VSp";$titlegp=~s/_/\\\\_/g;
+    print GP qq%set terminal postscript enhanced color\nset output "STD-${idxwntk}.ps"\n%;
+    print GP qq%set title "$titlegp"\n%;
+####
+    print GP qq%set grid\nset xzeroaxis lt -1\nset title "$titlegp"\n%;
+    print GP qq%set ylabel "(J-Ks)_{STD}-(J-Ks)_{VSp}"\n%;
+    print GP qq%set xlabel "Ks_{VSp}"\n%;
+    print GP qq%plot [8:16][-.5:.5]  "$i.g" u $posKV:((\$$posJS-\$$posKS)-(\$$posJV-\$$posKV)) ps .4 pt 2 lc 2 ti "err!=0", "$is" u $posKV:((\$$posJS-\$$posKS)-(\$$posJV-\$$posKV))  pt 1 lc 1 ti "calib stars", 0.02 lc 3, -0.02lc 3\n%;
+    print GP qq%set xlabel "(J-Ks)_{STD}"\n%;
+    print GP qq%plot [$JKsplotrange][-.5:.5]  "$i.g" u (\$$posJS-\$$posKS):((\$$posJS-\$$posKS)-(\$$posJV-\$$posKV)) ps .4 pt 2 lc 2 ti "err!=0", "$is" u (\$$posJS-\$$posKS):((\$$posJS-\$$posKS)-(\$$posJV-\$$posKV))  pt 1 lc 1 ti "calib stars", 0.02 lc 3, -0.02 lc 3\n%;
+####
+    print GP qq%set ylabel "(J-H)_{STD}-(J-H)_{VSp}"\n%;
+    print GP qq%set xlabel "Ks_{VSp}"\n%;
+    print GP qq%plot [8:16][-.5:.5]  "$i.g" u $posKV:((\$$posJS-\$$posHS)-(\$$posJV-\$$posHV)) ps .4 pt 2 lc 2 ti "err!=0", "$is" u $posKV:((\$$posJS-\$$posHS)-(\$$posJV-\$$posHV))  pt 1 lc 1 ti "calib stars", 0 noti, 0.02, -0.02\n%;
+    print GP qq%set xlabel "(J-H)_{STD}"\n%;
+    print GP qq%plot [$JHplotrange][-.5:.5]  "$i.g" u (\$$posJS-\$$posHS):((\$$posJS-\$$posHS)-(\$$posJV-\$$posHV)) ps .4 pt 2 lc 2 ti "err!=0", "$is" u (\$$posJS-\$$posHS):((\$$posJS-\$$posHS)-(\$$posJV-\$$posHV))  pt 1 lc 1 ti "calib stars", 0.02 lc 3 , -0.02 lc 3\n%;
+####
+    print GP qq%set ylabel "(H-Ks)_{STD}-(H-Ks)_{VSp}"\n%;
+    print GP qq%set xlabel "Ks_{VSp}"\n%;
+    print GP qq%plot [8:16][-.5:.5]  "$i.g" u $posKV:((\$$posHS-\$$posKS)-(\$$posHV-\$$posKV)) ps .4 pt 2 lc 2 ti "err!=0", "$is" u $posKV:((\$$posHS-\$$posKS)-(\$$posHV-\$$posKV))  pt 1 lc 1 ti "calib stars", 0.02 lc 3, -0.02 lc 3\n%;
+    print GP qq%set xlabel "(H-Ks)_{STD}"\n%;
+    print GP qq%plot [$HKsplotrange][-.5:.5]  "$i.g" u (\$5-\$7):((\$5-\$7)-(\$11-\$13)) ps .4 pt 2 lc 2 ti "err!=0", "$is" u (\$$posHS-\$$posKS):((\$$posHS-\$$posKS)-(\$$posHV-\$$posKV))  pt 1 lc 1 ti "calib stars", 0.02 lc 3, -0.02 lc 3\n%;
+####
+####
+    print GP qq%set ylabel "J_{STD}-J_{VSp}"\n%;
+    print GP qq%set xlabel "(J-Ks)_{STD}"\n%;
+    print GP qq%plot [$JKsplotrange][-.5:.5]  "$i.g" u (\$$posJS-\$$posKS):(\$$posJS-\$$posJV) ps .4 pt 2 lc 2 ti "err!=0", "$is" u (\$$posJS-\$$posKS):(\$$posJS-\$$posJV)  pt 1 lc 1 ti "calib stars", 0.02 lc 3, -0.02 lc 3\n%;
+    print GP qq%plot [$JKsplotrange][-.5:.5]  "$i.g" u (\$$posJS-\$$posKS):(\$$posJS-\$$posJV) lc 1 noti, "$i.b" u (\$$posJS-\$$posKS):(\$$posJS-\$$posJV) ps .5 lc 2 noti, 0.02 lc 3, -0.02 lc 3\n%;
+    print GP qq%set xlabel "J_{VSp}"\n%;
+    print GP qq%plot [8:17][-.5:.5]  "$i.g" u $posJV:(\$$posJS-\$$posJV) ps .4 pt 2 lc 2 ti "err!=0", "$is" u $posJV:(\$$posJS-\$$posJV) pt 1 lc 1 ti "calib stars", 0.02 lc 3, -0.02 lc 3\n%;
+####
+    print GP qq%set xzeroaxis lt -1 lw .3 \n%;
+    print GP qq%set multiplot\n%;
+    print GP qq%set pm3d map\nset palette color negative\n%;
+    print GP qq%splot [8:17][-.5:.5] "$tmpJ.fr" u 1:2:(log10(\$3)) noti\n%;
+    print GP qq%unset pm3d\n%;
+    print GP qq%splot [8:17][-.5:.5] "$tmpJ" w l lc 0  lt 2 lw .5 noti,"$tmpH" w l lc 0 lt 2 lw .5 noti\n%;
+    print GP qq%unset multiplot\n%;
+    print GP qq%set xzeroaxis lt -1\n%;
+#    print GP qq%set ylabel "J_{STD}-J_{VSp}"\n%;
+    print GP qq%plot [8:17][-.5:.5]  "$i.g" u $posJV:(\$$posJS-\$$posJV) lc 1 noti, "$i.b" u $posJV:(\$$posJS-\$$posJV) lc 2 ps .5 noti, 0.02 lc 3, -0.02 lc 3\n%;
+    print GP qq%set ylabel "J_{STD}-J_{VSp} -Ex_J"\n%;
+    print GP qq%plot [8:17][-.5:.5]  "$i.g" u $posJV:(\$$posJS-\$$posJV-\$$posJE) ps .4 pt 2 lc 2 ti "err!=0", "$is" u $posJV:(\$$posJS-\$$posJV-\$$posJE) pt 1 lc 1 ti "calib stars"\n%;
+    print GP qq%set xlabel "theorical Ex_J in $radexc arcsec"\n%;
+    print GP qq%plot [-2:][-2:2]  "$i.g" u $posJE:(\$$posJS-\$$posJV) ps .4 pt 2 lc 2 ti "err!=0", "$is" u $posJE:(\$$posJS-\$$posJV) pt 1 lc 1 ti "calib stars", x noti\n%;
+    print GP qq%plot [-2:][-2:2]  "$i.g" u $posJE:(\$$posJS-\$$posJV) lc 1 noti,  "$i.b" u $posJE:(\$$posJS-\$$posJV) lc 2 ps .5 noti, x noti\n%;
+####
+####
+    print GP qq%set ylabel "H_{STD}-H_{VSp}"\n%;
+    print GP qq%set xlabel "(J-Ks)_{STD}"\n%;
+    print GP qq%plot [$JKsplotrange][-.5:.5]  "$i.g" u  (\$$posJS-\$$posKS):(\$$posHS-\$$posHV) ps .4 pt 2 lc 2 ti "err!=0", "$is" u (\$$posJS-\$$posKS):(\$$posHS-\$$posHV) pt 1 lc 1 ti "calib stars", 0.02 lc 3, -0.02 lc 3\n%;
+    print GP qq%plot [$JKsplotrange][-.5:.5]  "$i.g" u (\$$posJS-\$$posKS):(\$$posHS-\$$posHV) lc 1 noti, "$i.b" u (\$$posJS-\$$posKS):(\$$posHS-\$$posHV) lc 2 ps .5 noti, 0.02 lc 3, -0.02 lc 3\n%;
+    print GP qq%set xlabel "H_{VSp}"\n%;
+    print GP qq%plot [8:16][-.5:.5]  "$i.g" u $posHV:(\$$posHS-\$$posHV) ps .4 pt 2 lc 2 ti "err!=0", "$is" u $posHV:(\$$posHS-\$$posHV) pt 1 lc 1 ti "calib stars",  0.02 lc 3, -0.02 lc 3\n%;
+    print GP qq%set xzeroaxis lt -1 lw .3 \n%;
+    print GP qq%set multiplot\n%;
+    print GP qq%set pm3d map\nset palette color negative\n%;
+    print GP qq%splot [8:16][-.5:.5] "$tmpH.fr" u 1:2:(log10(\$3)) noti\n%;
+    print GP qq%unset pm3d\n%;
+    print GP qq%splot [8:16][-.5:.5] "$tmpJ" w l lc 0  lt 2 lw .5 noti,"$tmpH" w l lc 0 lt 2 lw .5 noti\n%;
+    print GP qq%unset multiplot\n%;
+    print GP qq%set xzeroaxis lt -1\n%;
+#    print GP qq%set ylabel "H_{STD}-H_{VSp}"\n%;
+    print GP qq%plot [8:16][-.5:.5]  "$i.g" u $posHV:(\$$posHS-\$$posHV) lc 1 noti, "$i.b" u $posHV:(\$$posHS-\$$posHV) lc 2 ps .5 noti, 0.02 lc 3, -0.02 lc 3\n%;
+    print GP qq%set ylabel "H_{STD}-H_{VSp} -Ex_{H}"\n%;
+    print GP qq%plot [8:16][-.5:.5]  "$i.g" u $posHV:(\$$posHS-\$$posHV-\$$posHE) ps .4 pt 2 lc 2 ti "err!=0", "$is" u $posHV:(\$$posHS-\$$posHV-\$$posHE) pt 1 lc 1 ti "calib stars"\n%;
+    print GP qq%set xlabel "theorical Ex_H in $radexc arcsec"\n%;
+    print GP qq%plot [-2:][-2:2]  "$i.g" u $posHE:(\$$posHS-\$$posHV) ps .4 pt 2 lc 2 ti "err!=0", "$is" u $posHE:(\$$posHS-\$$posHV) pt 1 lc 1 ti "calib stars",   x noti\n%;
+    print GP qq%plot [-2:][-2:2]  "$i.g" u $posHE:(\$$posHS-\$$posHV) lc 1 noti,  "$i.b" u $posHE:(\$$posHS-\$$posHV) lc 2 ps .5 noti, x noti\n%;
+####
+####
+    print GP qq%set ylabel "Ks_{STD}-Ks_{VSp}"\n%;
+    print GP qq%set xlabel "(J-Ks)_{STD}"\n%;
+    print GP qq%plot [$JKsplotrange][-.5:.5]  "$i.g" u (\$$posJS-\$$posKS):(\$$posKS-\$$posKV) ps .4 pt 2 lc 2 ti "err!=0", "$is" u (\$$posJS-\$$posKS):(\$$posKS-\$$posKV) pt 1 lc 1 ti "calib stars", 0.02 lc 3, -0.02 lc 3\n%;
+    print GP qq%plot [$JKsplotrange][-.5:.5]  "$i.g" u (\$$posJS-\$$posKS):(\$$posKS-\$$posKV) lc 1 noti,  "$i.b" u (\$$posJS-\$$posKS):(\$$posKS-\$$posKV) lc 2 ps .5 noti, 0.02 lc 3, -0.02 lc 3\n%;
+    print GP qq%set xlabel "Ks_{VSp}"\n%;
+    print GP qq%plot [8:16][-.5:.5]  "$i.g" u $posKV:(\$$posKS-\$$posKV) ps .4 pt 2 lc 2 ti "err!=0", "$is" u $posKV:(\$$posKS-\$$posKV) pt 1 lc 1 ti "calib stars",  0.02 lc 3, -0.02 lc 3\n%;
+    print GP qq%set xzeroaxis lt -1 lw .3 \n%;
+    print GP qq%set multiplot\n%;
+    print GP qq%set pm3d map\nset palette color negative\n%;
+    print GP qq%splot [8:16][-.5:.5] "$tmpK.fr" u 1:2:(log10(\$3)) noti\n%;
+    print GP qq%unset pm3d\n%;
+    print GP qq%splot [8:16][-.5:.5] "$tmpJ" w l lc 0  lt 2 lw .5 noti,"$tmpH" w l lc 0 lt 2 lw .5 noti\n%;
+    print GP qq%unset multiplot\n%;
+    print GP qq%set xzeroaxis lt -1\n%;
+#    print GP qq%set ylabel "Ks_{STD}-Ks_{VSp}"\n%;
+    print GP qq%plot [8:16][-.5:.5]  "$i.g" u $posKV:(\$$posKS-\$$posKV) lc 1 noti, "$i.b" u $posKV:(\$$posKS-\$$posKV) lc 2 ps .5 noti, 0.02 lc 3, -0.02 lc 3\n%;
+    print GP qq%set ylabel "Ks_{STD}-Ks_{VSp} -Ex_{Ks}"\n%;
+    print GP qq%plot [8:16][-.5:.5]  "$i.g" u $posKV:(\$$posKS-\$$posKV-\$$posKE) ps .4 pt 2 lc 2 ti "err!=0", "$is" u $posKV:(\$$posKS-\$$posKV-\$$posKE) pt 1 lc 1 ti "calib stars"\n%;
+    print GP qq%set xlabel "theorical Ex_{Ks} in $radexc arcsec"\n%;
+    print GP qq%plot [-2:][-2:2]  "$i.g" u $posKE:(\$$posKS-\$$posKV) ps .4 pt 2 lc 2 ti "err!=0", "$is" u $posKE:(\$$posKS-\$$posKV) pt 1 lc 1 ti "calib stars",  x noti\n%;
+    print GP qq%plot [-2:][-2:2]  "$i.g" u $posKE:(\$$posKS-\$$posKV) lc 1 noti, "$i.b" u $posKE:(\$$posKS-\$$posKV) lc 2 ps .5 noti, x noti\n%;
+####
+####
+    print GP qq%set ylabel "dec"\nset xlabel "ra"\nplot "${i}-rej" ps .3 ti "unmatched STD stars"\nset xtics -$cmpmaxdist,.1\n%;
+    print GP qq%set logscale y\nset ylabel "N_{star}/area"\nset xlabel "{/Symbol D}r [arcsec]"\n%;
+    print GP qq%plot "$i.rfr"  u 1:((\$2/(2*pi*.05*\$1))) w l ti "{/Symbol D}r", "$i.xfr" u 1:((\$2/(.05*2))) w l ti "{/Symbol Da}", "$i.yfr" u 1:((\$2/(.05*2))) w l ti "{/Symbol Dd}"\n%;
+    close GP;
+
+    unlink "$i.xfr", "$i.yfr", "$i.rfr", "$i.b", "$i.g", "$tmpJ", "$tmpJ.fr", "$tmpH", "$tmpH.fr", "$tmpK", "$tmpK.fr";
+
+    push @totar, "STD-${idxwntk}.ps";
+    }
+#############ReUnioning################
+@elit=sort keys %t_o;
+for my $tok(sort keys %t_o){
+  my(@tfam_ty)=();
+  print "Tile $tok =>\n";
+
+  for my $tfok(sort (split m.\s+., $t_tfam{$tok})){
+    my $tfo=$tfok; $tfo=~s/_/ /g; $fmst=(split m._.,$tfok)[1];
+    print "\tFamily $tfo =>\n";
+
+    for my$iii(0..$#fff){print "Filter $fff[$iii]:  ";
+      my($no,@no)=();
+      unlink "${workname}_${tfok}_$fff[$iii].mag","${workname}_${tfok}_$fff[$iii].raw","${workname}_${tfok}_$fff[$iii].cor";
+      my@l=();
+      for my$fcok(sort keys %fco_){
+        my@kh=(split /\s+/,$fov_flt{"$tfo $fcok $fff[$iii]"});
+        if(@kh){
+          push @l,@kh;
+          push @no,scalar(@kh);
+        }
+      }
+      print join "\x20\x20\x20",@l,"\n";
+      $no=$no[0];  for my$m(@no){ $no=$m if($no>$m); }
+      if(@l>1){
+        my$noo=$no; $noo=2 if($no==3); ($no,$noo)=(3,3) if($no>3);
+        my ($mch, $flag, $sigma, @files)=("${workname}_${tfok}_$fff[$iii].mch", "$noo,.15,$no", 3, @l);
+        $mch=~s/ /_/g;
+          print "$flag $sigma\n";
+        unlink "${workname}_${tfok}_$fff[$iii].mag", "${workname}_${tfok}_$fff[$iii].cor", "${workname}_${tfok}_$fff[$iii].raw";
+        open(MM,"|${pathdir}VVV-DoMatch.pl");print MM "$mch 1 $flag $sigma 2  reu ", join (" ", @files, "\n");print MM "$mch 0 $flag $sigma 2  reu ", join (" ", @files, "\n");close MM;
+        open(MCH, $mch);while(<MCH>){s/\x27//g;my@qaz=split; print sprintf("%s  %+.4f\n",$qaz[0], $qaz[7]);}close MCH;
+      }elsif(@l==1){
+        unlink "${workname}_${tfok}_$fff[$iii].mag";
+        symlink $l[0], "${workname}_${tfok}_$fff[$iii].mag";
+        print "\t==> ${workname}_${tfok}_$fff[$iii].mag\n";
+      }else{next;}
+
+      if($fff[$iii]=~/J|H|K/ && ($fff[$iii]=~/($filterstdcat)/)){
+        unlink "${workname}_${tfok}_$fff[$iii].cal", "${workname}_${tfok}_$fff[$iii].stdat", "${workname}_${tfok}_$fff[$iii].magold";
+        my@dfshg=split m.:.,$magcut[$filterstdcat{$fff[$iii]}];
+        my$zxpo=$zxpo[$filterstdcat{$fff[$iii]}]+0;
+        `${pathdir}stdVVVcleanNout $stdcat ${workname}_${tfok}_$fff[$iii].mag $plmn[0] $plmn[1] $stdcut $dfshg[0] $dfshg[1] $filterstdcat{$fff[$iii]} 0 $zxpo ${workname}_${tfok}_$fff[$iii]`;
+
+        my (@q,@b);
+ 
+        print "\nCorrecting for a constant shift:\n";
+        if($calpar{"${workname}_${tfok}_$fff[$iii].mag"}){
+          print "Using given calibrating parameters: ".$calpar{"${workname}_${tfok}_$fff[$iii].mag"}."\n";
+          @b=(split ' ',$calpar{"${workname}_${tfok}_$fff[$iii].mag"});
+        }else{
+          print "", @q=`${pathdir}vvvpbswlsqfit_erry  ${workname}_${tfok}_$fff[$iii].cal 1   $coeffpbsf[$iii]   `, "\n";
+          @b=((split ' ',$q[4])[1..2]); $b[1]=0;
+        }
+ 
+        print CALF join "  ", "${workname}_${tfok}_$fff[$iii].mag", @b,"\n";
+        `${pathdir}calibVVV ${workname}_${tfok}_$fff[$iii] 1 0 $b[0] 0 0 0 `;
+        rename "${workname}_${tfok}_$fff[$iii].mag", "${workname}_${tfok}_$fff[$iii].magold";
+        rename "${workname}_${tfok}_$fff[$iii].mag_cal", "${workname}_${tfok}_$fff[$iii].mag";
+        print "\t==> ${workname}_${tfok}_$fff[$iii].mag\n";
+      }
+  print "\n\n";
+    }
+  print "\n\n";
+
+  WAIT:
+  $prewait=time;
+  while(-e "WAIT" || -e "${scriptname}.WAIT"){    sleep 10;  }
+  if(-e "STOP" || -e "${scriptname}.STOP"){
+unlink $lockfile;
+ die "!!!Obbedisco!\n\n";}
+  $start+=time-$prewait;
+
+  ##Doing the catalogue
+    $idxwntk="${workname}_${tfok}";
+    {
+    $mchmd="match";
+    my ($mch, $flag, $sigma, @files)=("${workname}_${tfok}_", "2,.15,2", 5);$mch=~s/ /_/g;
+    for my$fff(@fff){if(-e "${workname}_${tfok}_${fff}.mag"){$mch.=$fff; push @files, "${workname}_${tfok}_${fff}.mag";$tflt{$tok}.=$fff if(!($tflt{$tok}=~/$fff/));}}$mch.=".mch";
+    $flag="3,.5,3" if(@files>4);
+    print "$flag $sigma\n";
+    ($rraww=$mch)=~s/mch$//;
+    unlink "${rraww}raw", "{$rraww}mag", "${rraww}tfr", "${rraww}cor", "${rraww}Ctlg";
+    open(MM,"|${pathdir}VVV-DoMatch.pl");print MM "$mch 1 $flag $sigma 2  reu ", join (" ", @files, "\n");print MM "$mch 0 $flag $sigma 2  reu ", join (" ", @files, "\n");close MM;
+    unlink "${rraww}mag", "${rraww}tfr", "${rraww}cor";
+    {
+    my@qazwsx=(split m.\s+.,$tfam_f{$tfok});
+    $hjkl=1E6;
+    for my $f (@qazwsx){
+      my $z=`${pathdir}xy2sky $f.fits 0 0`;
+      $z=`${pathdir}sky2xy $qazwsx[0].fits $z`;
+      my@zzz=(split /\s+/, $z)[4,5];
+      ($hjkl,$tyuiop)=($zzz[0],$f) if($hjkl>$zzz[0]);
+    }
+    push @tfam_ty, $tyuiop;
+    `sort -gu -k 1 $qazstdat{$tfok} > $idxwntk.stdat`;
+    }
+
+
+    &BuildCtlg();$tstc{$tok}.="${rraww}Ctlg ";
+    &PlotDmCMD();
+    &TooMASScmpplot();
+
+     }
+      print "\n\n\n";
+  }
+
+###################################################
+
+  WAIT:
+  $prewait=time;
+  while(-e "WAIT" || -e "${scriptname}.WAIT"){    sleep 10;  }
+  if(-e "STOP" || -e "${scriptname}.STOP"){
+unlink $lockfile;
+ die "!!!Obbedisco!\n\n";}
+  $start+=time-$prewait;
+
+
+  @skffamo=(sort (split m.\s+., $t_tfam{$tok}));
+if(@skffamo>1){
+    print "\t",join(" ", "All the stripes: ", @skffamo),"\n";
+  if($stripematch=~/match/ || @elit>1){
+    $fmst=0;
+    $mchmd="match";
+    for my$iii(0..$#fff){print "Filter $fff[$iii]:  ";
+      unlink "${workname}_${tok}_$fff[$iii].mag","${workname}_${tok}_$fff[$iii].raw","${workname}_${tok}_$fff[$iii].cor";
+        my ($mch, $flag, $sigma, @files)=("${workname}_${tok}_$fff[$iii].mch", "1,.15,1", 3);
+        for my $fgh (@skffamo){my$hgf="${workname}_${fgh}_$fff[$iii].mag";push @files, $hgf if(-e $hgf)}
+        if(@files>1){print join(" ", @files),"\n$flag $sigma\n";
+        open(MM,"|${pathdir}VVV-DoMatch.pl");print MM "$mch 1 $flag $sigma 2  reu ", join (" ", @files, "\n");print MM "$mch 0 $flag $sigma 2  reu ", join (" ", @files, "\n");close MM;
+        open(MCH, $mch);while(<MCH>){s/\x27//g;my@qaz=split; print sprintf("%s  %+.4f\n",$qaz[0], $qaz[7]);}close MCH;
+      unlink "${workname}_${tok}_$fff[$iii].raw","${workname}_${tok}_$fff[$iii].cor" if(!$debug);
+        print "\t==> ${workname}_${tok}_$fff[$iii].mag\n";
+      }
+      elsif(@files==1) {
+        symlink $files[0], "${workname}_${tok}_$fff[$iii].mag";
+        print "\t==> ${workname}_${tok}_$fff[$iii].mag\n";
+      }
+    }print "\n";
+    ##Doing the catalogue
+    {
+      my ($mch, $flag, $sigma, @files)=("${workname}_${tok}_", "2,.15,2", 5);
+      for my$fff(@fff){$mch.=$fff and push @files, "${workname}_${tok}_${fff}.mag" if(-e "${workname}_${tok}_${fff}.mag");}$mch.=".mch";
+      $flag="3,.5,3" if(@files>4);
+      print "$flag $sigma\n";
+      ($rraww=$mch)=~s/mch$//;
+      unlink "${rraww}mag", "${rraww}tfr", "${rraww}cor", "${rraww}raw", "${rraww}Ctlg";
+      open(MM,"|${pathdir}VVV-DoMatch.pl");print MM "$mch 1 $flag $sigma 2  reu ", join (" ", @files, "\n");print MM "$mch 0 $flag $sigma 2  reu ", join (" ", @files, "\n");close MM;
+      unlink "${rraww}mag", "${rraww}tfr", "${rraww}cor" if(!$debug);
+    }
+  }elsif($stripematch=~/union/){
+   $rraww="${workname}_${tok}_".$tflt{$tok}.".";
+   $tttt=$tok;
+   print "$tstc{$tok} => ${rraww}Ctlg";
+   $mchmd="union";
+  }
+
+    $idxwntk="${workname}_${tok}";
+    {
+    $hjkl=1E6;
+    for my $f (@tfam_ty){
+      my $z=`${pathdir}xy2sky $f.fits 0 0`;
+      $z=`${pathdir}sky2xy $tfam_ty[0].fits $z`;
+      my@zzz=(split /\s+/, $z)[4,5];
+      ($hjkl,$tyuiop)=($zzz[1],$f) if($hjkl>$zzz[1]);
+    }
+    push @t_ty, $tyuiop;
+    my$qazstdat="";
+    for my$tadts(@skffamo){$qazstdat.="${workname}_$tadts.stdat ";}
+    `sort -gu -k 1 $qazstdat > $idxwntk.stdat`;
+    }
+    &BuildCtlg();
+    &PlotDmCMD();
+    &TooMASScmpplot();
+ }elsif(@elit>1){
+  for my$iii(0..$#fff){
+    unlink "${workname}_${tok}_$fff[$iii].mag","${workname}_${tok}_$fff[$iii].raw";
+    my$hgf="${workname}_$skffamo[0]_$fff[$iii].mag";
+    if(-e $hgf){
+      symlink $hgf, "${workname}_${tok}_$fff[$iii].mag";
+    }
+    @t_ty=@tfam_ty;
+    unlink "${workname}_${tok}.stdat";
+    symlink "${workname}_$skffamo[0].stdat", "${workname}_${tok}.stdat";
+  }
+}
+###########
+}
+close CALF;
+##############
+if(@elit>1){
+  $mchmd="match";
+  $fmst=0;
+  print "\t",join(" ", "All the tiles: ", @elit),"\n";
+  for my$iii(0..$#fff){print "Filter $fff[$iii]:  ";
+    unlink "${workname}_$fff[$iii].mag","${workname}_$fff[$iii].raw";
+      my ($mch, $flag, $sigma, @files)=("${workname}_$fff[$iii].mch", "1,.15,1", 3);
+      for my $fgh (@elit){my$hgf="${workname}_${fgh}_$fff[$iii].mag";push @files, $hgf if(-e $hgf)}
+    if(@files>1){print join(" ", @files),"\n$flag $sigma\n";
+      unlink "${workname}_$fff[$iii].raw","${workname}_$fff[$iii].mag","${workname}_$fff[$iii].cor";
+      open(MM,"|${pathdir}VVV-DoMatch.pl");print MM "$mch 1 $flag $sigma 2  reu ", join (" ", @files, "\n");print MM "$mch 0 $flag $sigma 2  reu ", join (" ", @files, "\n");close MM;
+      open(MCH, $mch);while(<MCH>){s/\x27//g;my@qaz=split; print sprintf("%s  %+.4f\n",$qaz[0], $qaz[7]);}close MCH;
+      unlink "${workname}_$fff[$iii].raw" if(!$debug);
+      print "\t==> ${workname}_$fff[$iii].mag\n";
+    }
+    elsif(@files==1) {symlink $files[0], "${workname}_$fff[$iii].mag"; print "\t==> ${workname}_$fff[$iii].mag\n";}
+  }
+print "\n";
+  ##Doing the catalogue
+  {
+    my ($mch, $flag, $sigma, @files)=("${workname}_", "2,.15,2", 5);
+    for my$fff(@fff){$mch.=$fff and push @files, "${workname}_${fff}.mag" if(-e "${workname}_${fff}.mag");}$mch.=".mch";
+    $flag="3,.5,3" if(@files>4);
+    print "$flag $sigma\n";
+    ($rraww=$mch)=~s/mch$//;
+    unlink "${rraww}mag", "${rraww}tfr", "${rraww}cor", "${rraww}raw", "${rraww}Ctlg";
+    open(MM,"|${pathdir}VVV-DoMatch.pl");print MM "$mch 1 $flag $sigma 2  reu ", join (" ", @files, "\n");print MM "$mch 0 $flag $sigma 2  reu ", join (" ", @files, "\n");close MM;
+    unlink "${rraww}mag", "${rraww}tfr", "${rraww}cor" if(!$debug);
+
+    $idxwntk="${workname}";
+    {
+    $hjkl=1E6;
+    for my $f (@t_ty){
+      my $z=`${pathdir}xy2sky $f.fits 0 0`;
+      $z=`${pathdir}sky2xy $t_ty[0].fits $z`;
+      my@zzz=(split /\s+/, $z)[4,5];
+      ($hjkl,$tyuiop)=($zzz[1],$f) if($hjkl>$zzz[1]);
+    }
+    my$qazstdat="";
+    for my$tadts(@elit){$qazstdat.="${workname}_$tadts.stdat ";}
+    `sort -gu -k 1 $qazstdat > $idxwntk.stdat`;
+    }
+
+    &BuildCtlg();
+    &PlotDmCMD();
+    &TooMASScmpplot();
+
+  }
+}
+##############
+  print "\n\n";
+  push @totar, "nohup.out" if(-e "nohup.out");
+  my $totar=join " ", @totar;
+  print "Tarring:  $totar\n";
+  `tar -cjf ${workname}.tar.bz2  $totar`;
+
+EENDD:
+print time-$start,"\n", `date`;
+unlink $lockfile;
+
+

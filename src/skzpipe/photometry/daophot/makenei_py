@@ -1,0 +1,111 @@
+    
+
+def makenei1(lstfile=None, apfile=None, output=None, radius=(0,0)):
+  """Create .nei file
+It includes all the sources in lstfile, plus the ones nearer than first radius respect to them, then also the ones nearer then second radius respect to the previously selected
+In Daophot first radius=1.5*psfrad+2*fittrad+1; second radius=2*fittrad+1""";
+  Dao_check_file([lstfile, apfile]);
+  if(isinstance(radius,float) or isinstance(radius,int)): radius=(radius, 0)
+  if(not isinstance(radius, tuple) and  not isinstance(radius, list)): raise TypeError("makenei: radius must be a non-negative number or a tuple/list of non-negative numbers");
+  if(not isinstance(output,str)): raise TypeError("makenei: output must be a string.");
+
+  if(radius[0]==0): radius=(0,0);
+  radius=(radius[0]**2, radius[1]**2);
+  
+  lstidL=[];
+  with open(output, 'w') as fout:
+    with open(lstfile) as fin:
+      nl=copyheader(fin, fout)[0];
+      if(nl==2): raise SkZpipeError("lstfile must not be a ap file", excfile="makenei");
+      for line in fin:
+        lstidL.append(int(line.split(None,1)[0]));
+  
+    starL, neiL=[], [];
+    with open(apfile) as fin:
+      nl=copyheader(fin)[0];
+      if(nl!=2): raise SkZpipeError("apfile must be a ap file", excfile="makenei");
+      for line in fin:
+        line=line+fin.readline()+fin.readline();
+        tmp=daopar.Star_nei(daopar.Star_ap1(line));
+        if(lstidL and tmp.idn in lstidL):
+          neiL.append(tmp);
+          lstidL.remove(tmp.idn);
+        else:
+          starL.append(tmp);
+    
+    for rad in radius:
+      if(rad==0): break; #if a rad is 0, skip it and all the following
+      tmpl=[];
+      ii=0;
+      while(ii<len(starL)):
+        flg=True;
+        for nstar in neiL:
+          dst=(starL[ii].x-nstar.x)**2+(starL[ii].y-nstar.y)**2;
+          if(dst<rad):
+            tmpl.append(starL.pop(ii));
+            flg=False;
+            break;
+        if(flg): ii+=1;
+      neiL+=tmpl;
+
+    for nstar in neiL:
+      fout.write(str(nstar)+'\n');
+    
+    
+    
+    
+
+def makenei2(lstfile=None, apfile=None, output=None, radius=(0,0)):
+  """Create .nei file
+It includes all the sources in lstfile, plus the ones nearer than first radius respect to them, then also the ones nearer then second radius respect to the previously selected
+In Daophot first radius=1.5*psfrad+2*fittrad+1; second radius=2*fittrad+1""";
+  Dao_check_file([lstfile, apfile]);
+  if(isinstance(radius,float) or isinstance(radius,int)): radius=(radius, 0)
+  if(not isinstance(radius, tuple) and  not isinstance(radius, list)): raise TypeError("makenei: radius must be a non-negative number or a tuple/list of non-negative numbers");
+  if(not isinstance(output,str)): raise TypeError("makenei: output must be a string.");
+
+  if(radius[0]==0): radius=(0,0);
+  radius=(radius[0]**2, radius[1]**2);
+  
+  lstidL=[];
+  fdbg=open('test.dbg','w')
+  with open(output, 'w') as fout:
+    with open(lstfile) as fin:
+      nl=copyheader(fin, fout)[0];
+      if(nl==2): raise SkZpipeError("lstfile must not be a ap file", excfile="makenei");
+      for line in fin:
+        lstidL.append(int(line.split(None,1)[0]));
+  
+    starL, neiL=[], [];
+    with open(apfile) as fin:
+      nl=copyheader(fin)[0];
+      if(nl!=2): raise SkZpipeError("apfile must be a ap file", excfile="makenei");
+      for line in fin:
+        tmp=[t(x) for t,x in zip((int, float,float, float),fin.readline().split()[0:4])];
+        tmp.append(float(fin.readline().split()[0]));
+        if(lstidL and tmp[0] in lstidL):
+          neiL.append(tmp);
+          lstidL.remove(tmp[0]);
+        else:
+          starL.append(tmp);
+    
+    for rad in radius:
+      if(rad==0): break; #if a rad is 0, skip it and all the following
+      tmpl=[];
+      ii=0;
+      while(ii<len(starL)):
+        flg=True;
+        for nstar in neiL:
+          dst=(starL[ii][1]-nstar[1])**2+(starL[ii][2]-nstar[2])**2;
+          if(dst<rad):
+            tmpl.append(starL.pop(ii));
+            flg=False;
+            break;
+        if(flg): ii+=1;
+      neiL+=tmpl;
+
+    for nstar in neiL:
+      fout.write(daopar.DAO_nei.format_row['out'].format(nstar[0], nstar[1], nstar[2], nstar[3], nstar[4])+'\n');
+    
+    
+    
