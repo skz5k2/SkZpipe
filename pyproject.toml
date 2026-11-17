@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name                = 'skzpipe'
+version             = '0.8b3.dev325'
+authors             = [{name='Francesco SkZ Mauro', email       = 'skz5k2@gmail.com'},]
+description         = 'Enviroment for photometric reduction'
+readme              ="README.md"
+requires-python     = '>3.7'
+dependencies        = ['astropy>5', 'panda', 'scipy', 'numpy', 
+                       ]
+classifiers         =['Programming Language :: Python',
+            'Programming Language :: Python :: 3',
+            'Programming Language :: C',
+            'Operating System :: POSIX :: Linux',
+            'License :: Free To Use But Restricted',
+            'License :: OSI Approved :: GNU General Public License v3 (GPLv3)',
+            'Development Status :: 4 - Beta',
+            'Intended Audience :: Science/Research',
+                     'Topic :: Scientific/Engineering :: Astronomy'
+                    ]
+[project.urls]
+"Homepage" = 'https://github.com/skz5k2/SkZpipe'
+

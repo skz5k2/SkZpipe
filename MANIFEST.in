@@ -1,0 +1,22 @@
+include LICENSE
+#
+include src/skzpipe/photometry/daophot/format_dao.h
+include src/skzpipe/fits/_fitsC.h
+include src/skzpipe/fits/_fitsC.c
+include src/skzpipe/fits/_fits_resize.c
+include src/skzpipe/fits/_fits_average.c
+include src/skzpipe/fits/_fits_hdrerase.c
+include src/skzpipe/fits/_fits_hdredit.c
+include src/skzpipe/fits/_fits_findIRsat.c
+include src/skzpipe/fits/_fits_fixbadarea.c
+#
+include src/skzpipe/photometry/daophot/_daoCfunctions_fixidals.c
+include src/skzpipe/photometry/daophot/_daoCfunctions_makenei.c
+#
+#
+include bin/VVV-CalibAgainMatch.pl
+include bin/VVV-MetrCalibMatch.pl
+include bin/VVV-ReunionOnly.pl
+include bin/VVV-ReunionOnly2.pl
+include bin/VVV-ReunionStripes.pl
+include bin/VVV-DoMatch.pl
