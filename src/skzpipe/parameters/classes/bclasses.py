@@ -767,7 +767,7 @@ Methods
 """;
     _data_names=()
     _data_init=()
-    _data_delimiter={'in':None,'out':' ')
+    _data_delimiter={'in':None,'out':' '}
     _data_str=""
     
     #Really useful?
